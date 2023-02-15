@@ -116,7 +116,7 @@ def main():
     config.seed = args.seed
     config.optimizer = args.optimizer
     config.learning_rate = args.learning_rate
-    config.num_epochs = 100
+    config.num_epochs = 30
     config.batch_size = 500
 
     rng = random.PRNGKey(config.seed)
@@ -190,14 +190,18 @@ def main():
                            flatten_params({"params_l2": train_state.params}))
 
       # See https://github.com/wandb/client/issues/3690.
-      wandb_run.log({
+      metrics = {
           "epoch": epoch,
           "train_loss": train_loss,
           "test_loss": test_loss,
           "train_accuracy": train_accuracy,
           "test_accuracy": test_accuracy,
           **params_l2
-      })
+      }
+      metric_string = ''
+      for name, val in metrics.items():
+        metric_string = metric_string + f'{name}: {val}\n'
+      print(metric_string)
 
       # With layer width 512, the MLP is 3.7MB per checkpoint.
       with timeblock("model serialization"):
@@ -206,7 +210,11 @@ def main():
 
     # This will be a no-op when config.test is enabled anyhow, since wandb will
     # be initialized with mode="disabled".
-    wandb_run.log_artifact(artifact)
+    # wandb_run.log_artifact(artifact)
+    model_file = f'mlp_{config.seed}'
+    with open(model_file, 'wb') as f:
+        f.write(flax.serialization.to_bytes(train_state.params))
+        # pickle.dump(flax.serialization.to_bytes(train_state.params), f)
 
 if __name__ == "__main__":
   main()

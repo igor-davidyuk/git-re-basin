@@ -121,15 +121,8 @@ def main():
         return from_bytes(
             model.init(random.PRNGKey(0), jnp.zeros((1, 28, 28, 1)))["params"], fh.read())
 
-    filename = f"checkpoint{config.load_epoch}"
-    model_a = load_model(
-        Path(
-            wandb_run.use_artifact(f"mnist-mlp-weights:{config.model_a}").get_path(
-                filename).download()))
-    model_b = load_model(
-        Path(
-            wandb_run.use_artifact(f"mnist-mlp-weights:{config.model_b}").get_path(
-                filename).download()))
+    model_a = load_model(config.model_a)
+    model_b = load_model(config.model_b)
 
     train_ds, test_ds = load_datasets()
 
