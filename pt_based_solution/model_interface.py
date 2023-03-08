@@ -170,6 +170,7 @@ class ModelSupportingPermutations:
 
             # None indicates that there is no permutation relevant to that axis.
             if perm_name is not None:
+                print(weight_name, weight.shape, permutations[perm_name].shape)
                 weight = np.take(weight, permutations[perm_name], axis=axis)
 
         return weight
