@@ -13,35 +13,36 @@ np.random.seed(0)
 
 
 class CnnMnist(ModelSupportingPermutations):
-    def __init__(self, model_id: int) -> None:
-        assert 0 <= model_id <= 1, "Supporting two models"
-        torch.manual_seed(model_id)
-
-        super().__init__(model_id)
+    def __init__(
+            self,
+            weight_init_seed: int = 0,
+            batching_seed: int = 0,
+            dataset_rank: int = 1,
+            dataset_worldsize: int = 1
+    ) -> None:
+        super().__init__(weight_init_seed, batching_seed, dataset_rank, dataset_worldsize)
 
         self.valid_dataset = None
 
-    def get_model(self):
+    def get_model(self, weight_init_seed: int):
+        torch.manual_seed(weight_init_seed)
+        norm_layer = nn.BatchNorm2d
+
         model = nn.Sequential(
-            nn.Conv2d(1,30,3),
-            nn.InstanceNorm2d(30, affine=True),
+            nn.Conv2d(1, 30, 3),
+            norm_layer(30, track_running_stats=True),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),
-            nn.Conv2d(30,96,3),
-            nn.InstanceNorm2d(96, affine=True),
+            nn.Conv2d(30, 96, 3),
+            norm_layer(96, track_running_stats=True),
             nn.ReLU(),
-            nn.AvgPool2d((11,11)),
+            nn.AvgPool2d((11, 11)),
             nn.Flatten(),
             nn.Linear(96, 10)
             )
         return model
 
-    def train(self, bs=512, lr=5e-3, epoches=20, device=None):
-        if device is None:
-            device = torch.device(
-                'cuda' if torch.cuda.is_available() else 'cpu'
-                )
-        print(f'Using device {device}')
+    def get_train_loader(self, bs=128):
         train_transform = transforms.Compose([
             transforms.RandomHorizontalFlip(),
             transforms.RandomAffine(10),
@@ -51,10 +52,34 @@ class CnnMnist(ModelSupportingPermutations):
             '.', train=True, transform=train_transform, download=True)
         indices = np.random.permutation(len(train_dataset))
         # Splitting datasets in two parts
-        indices = np.array_split(indices, 2)[self.model_id]
+        indices = np.array_split(
+            indices, self.dataset_worldsize
+            )[self.dataset_rank - 1]
         train_dataset = Subset(train_dataset, indices)
-        train_loader = DataLoader(train_dataset, batch_size=bs, shuffle=True)
+        return DataLoader(train_dataset, batch_size=bs, shuffle=True)
 
+    def get_valid_loader(self):
+        if not self.valid_dataset:
+            valid_transform = transforms.Compose([
+                transforms.ToTensor()
+            ])
+            self.valid_dataset = MNIST(
+                '.', train=False, transform=valid_transform, download=True)
+        return DataLoader(self.valid_dataset, batch_size=128)
+
+    def train(self,
+              bs=512, lr=5e-3, epoches=20, device=None,
+              ):
+        if device is None:
+            device = torch.device(
+                'cuda' if torch.cuda.is_available() else 'cpu'
+                )
+        print(f'Using device {device}')
+
+        torch.manual_seed(self.batching_seed)
+        np.random.seed(self.batching_seed)
+
+        train_loader = self.get_train_loader(bs)
         optimizer = SGD(self.model.parameters(), momentum=0.9, lr=lr)
         scheduler = CosineAnnealingLR(optimizer, T_max=epoches, eta_min=1e-6)
         loss_fn = nn.CrossEntropyLoss()
@@ -79,20 +104,14 @@ class CnnMnist(ModelSupportingPermutations):
                   f'Test loss: {val_loss:4f}\t'
                   f'Test accuracy: {acc:4f}')
 
+    @torch.no_grad()
     def validate(self, device=None, loss_fn=None):
         if device is None:
             device = torch.device(
                 'cuda' if torch.cuda.is_available() else 'cpu'
                 )
-
-        if not self.valid_dataset:
-            valid_transform = transforms.Compose([
-                transforms.ToTensor()
-            ])
-            self.valid_dataset = MNIST(
-                '.', train=False, transform=valid_transform, download=True)
-        valid_loader = DataLoader(self.valid_dataset, batch_size=128)
-
+        self.model.to(device)
+        valid_loader = self.get_valid_loader()
         self.model.eval()
 
         total_samples = 0
@@ -132,3 +151,12 @@ class CnnMnist(ModelSupportingPermutations):
             }
 
         return self._weight_name_to_perm_vector
+
+
+if __name__ == '__main__':
+    model_a = CnnMnist(
+        weight_init_seed = 0,
+        batching_seed = 0,
+        dataset_rank= 1,
+        dataset_worldsize= 1)
+    model_a.train(lr=5e-2, epoches=1)

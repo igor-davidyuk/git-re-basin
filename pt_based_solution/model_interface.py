@@ -6,15 +6,36 @@ import torch
 
 
 class ModelSupportingPermutations:
-    def __init__(self, model_id: int, ) -> None:
-        self.model_id = model_id
-        self.model = self.get_model()
+    def __init__(
+            self,
+            weight_init_seed: int = 0,
+            batching_seed: int = 0,
+            dataset_rank: int = 1,
+            dataset_worldsize: int = 1,
+    ) -> None:
+        """
+        Init Model.
+
+        dataset_split format is (rank, worldsize)
+        """
+        self.weight_init_seed = weight_init_seed
+        self.batching_seed = batching_seed
+        self.dataset_rank = dataset_rank
+        self.dataset_worldsize = dataset_worldsize
+
+        self.model = self.get_model(weight_init_seed)
         # This is {'weight_name': (P1, P2, ...)]}
         self._weight_name_to_perm_vector = None
         # This is {'P_name': ('weight_name', target_axis)}
         self._perm_name_to_weight_names = None
 
-    def get_model(self):
+    def get_model(self, weight_init_seed: int) -> None:
+        raise NotImplementedError
+
+    def get_train_loader(self):
+        raise NotImplementedError
+
+    def get_valid_loader(self):
         raise NotImplementedError
 
     def train(self):
@@ -22,6 +43,17 @@ class ModelSupportingPermutations:
 
     def validate(self):
         raise NotImplementedError
+
+    @torch.no_grad()
+    def _recalculate_bn_statistics(self):
+        device = 'cpu'
+        self.model.to(device)
+        train_loader = self.get_train_loader()
+        self.model.train()
+        for data, _ in train_loader:
+            data = data.to(device)
+            _ = self.model(data)
+        self.model.eval()
 
     @property
     def weight_name_to_perm_vector(self):
@@ -63,12 +95,15 @@ class ModelSupportingPermutations:
             tensor_dict[k] = torch.tensor(v)
         self.model.load_state_dict(tensor_dict)
 
-    def get_permuted_model(self, permutations):
+    def get_permuted_model(self, permutations, recalc_bn_statistics=False):
         new_model = deepcopy(self)
         new_model._apply_permutation(permutations)
+        if recalc_bn_statistics:
+            new_model._recalculate_bn_statistics()
         return new_model
 
-    def get_blend_model(self, admixture_model, fraction, skip_not_permuted=False):
+    def get_blend_model(self, admixture_model, fraction,
+                        skip_not_permuted=False, recalc_bn_statistics=False):
         self_state = self.state_dict
         admixture_state = admixture_model.state_dict
         blend_state = {}
@@ -86,6 +121,8 @@ class ModelSupportingPermutations:
                         f'Permutation for weight {name} is not defined.')
         new_model = deepcopy(self)
         new_model.state_dict = blend_state
+        if recalc_bn_statistics:
+            new_model._recalculate_bn_statistics()
         return new_model
 
     def match_weights(
@@ -170,7 +207,6 @@ class ModelSupportingPermutations:
 
             # None indicates that there is no permutation relevant to that axis.
             if perm_name is not None:
-                print(weight_name, weight.shape, permutations[perm_name].shape)
                 weight = np.take(weight, permutations[perm_name], axis=axis)
 
         return weight
